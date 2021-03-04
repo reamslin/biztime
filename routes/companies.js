@@ -3,6 +3,7 @@ const { route } = require("../app");
 const router = new express.Router();
 const db = require("../db");
 const ExpressError = require("../expressError");
+const slugify = require('slugify');
 
 
 /** GET /companies */
@@ -16,21 +17,26 @@ router.get("/", async function (req, res, next) {
 /** GET /companies/[code] */
 router.get("/:code", async function (req, res, next) {
     try {
-        const { code } = req.params
         const results = await db.query(
-            `SELECT * FROM companies WHERE code=$1`, [code]
+            `SELECT c.code, c.name, c.description, i.field
+             FROM companies AS c
+             LEFT JOIN industries_companies AS ic
+             ON c.code = ic.comp_code
+             LEFT JOIN industries AS i
+             ON i.code = ic.ind_code
+            WHERE c.code=$1`, [req.params.code]
         )
         const invoicesResults = await db.query(
             `SELECT id FROM invoices 
-            WHERE comp_code=$1`, [code]
+            WHERE comp_code=$1`, [req.params.code]
         );
         if (results.rows.length === 0) {
             throw new ExpressError(`Could not find company with code: ${code}`, 404)
         }
-        const company = results.rows[0]
-        const invoices = invoicesResults.rows
-        company.invoices = invoices.map(inv => inv.id);
-        return res.json({ company: company })
+        const { code, name, description } = results.rows[0];
+        const industries = results.rows.map(r => r.field);
+        const invoices = invoicesResults.rows.map(inv => inv.id);
+        return res.json({ company: { code, name, description, invoices, industries } })
     } catch (err) {
         next(err)
     }
@@ -39,11 +45,11 @@ router.get("/:code", async function (req, res, next) {
 /** POST /companies */
 router.post("/", async function (req, res, next) {
     try {
-        const { code, name, description } = req.body;
+        const { name, description } = req.body;
         const results = await db.query(
             `INSERT INTO companies (code, name, description)
             VALUES ($1, $2, $3)
-            RETURNING code, name, description `, [code, name, description]
+            RETURNING code, name, description `, [slugify(name), name, description]
         );
 
         return res.status(201).json({ company: results.rows[0] })
